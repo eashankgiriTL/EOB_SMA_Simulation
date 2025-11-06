@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Path Studio — A* shortest path + SMA demo</title>
+  <style>
+    :root{
+      --bg:#0b0f14;--ink:#e5e7eb;--muted:#94a3b8;--panel:#0f172a;--wall:#cbd5e1;--point:#fafafa;--path:#f59e0b;--accent:#22d3ee;--good:#34d399;--info:#60a5fa
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;color:var(--ink);font:14px/1.35 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;overflow:hidden;background:#0b0f14}
+
+    /* layered aesthetic background */
+    .bg-layer{position:fixed;inset:0;z-index:-2;background:
+      radial-gradient(1200px 800px at 65% -10%, #0e1628 0%, #0b0f14 45%),
+      radial-gradient(900px 700px at 10% 110%, rgba(34,211,238,.08), transparent 60%),
+      radial-gradient(900px 700px at 90% 120%, rgba(245,158,11,.06), transparent 60%),
+      linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0));
+    }
+    .grain{position:fixed;inset:-200%;z-index:-1;opacity:.08;pointer-events:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140" viewBox="0 0 140 140"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="table" tableValues="0 1"/></feComponentTransfer></filter><rect width="100%" height="100%" filter="url(%23n)"/></svg>');animation:grain 7s steps(10) infinite}
+    @keyframes grain {0%{transform:translate(0,0)}10%{transform:translate(-2%, -2%)}20%{transform:translate(-1%,2%)}30%{transform:translate(2%,-1%)}40%{transform:translate(1%,1%)}50%{transform:translate(-1%, -2%)}60%{transform:translate(-1%,1%)}70%{transform:translate(2%,2%)}80%{transform:translate(1%,-1%)}90%{transform:translate(-2%,1%)}100%{transform:translate(0,0)}}
+
+    .app{display:grid;grid-template-columns:320px 1fr 360px;grid-template-rows:auto 1fr;gap:12px;height:100%;padding:12px}
+    header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,0));border:1px solid rgba(148,163,184,.15);border-radius:16px}
+    .title{font-weight:800}
+    .panel{background:linear-gradient(180deg,rgba(15,23,42,.88),rgba(15,23,42,.6));border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:14px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+    .row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:10px}
+    .hint{color:var(--muted)}
+    button.icon{display:inline-flex;align-items:center;gap:8px;background:rgba(148,163,184,.10);color:var(--ink);border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:8px 12px;cursor:pointer;font-weight:700;margin-right:8px}
+    button.icon.active{background:rgba(34,211,238,.14);border-color:rgba(34,211,238,.5)}
+    input[type="range"],input[type="checkbox"]{accent-color:var(--accent)}
+    canvas{width:100%;height:100%;display:block;border-radius:18px;background:#020617;position:relative}
+    .overlay{position:absolute;left:12px;bottom:12px;font-size:12px;color:#cbd5e1;background:rgba(2,6,23,.6);border:1px solid rgba(148,163,184,.15);padding:6px 10px;border-radius:10px}
+    .legend{display:flex;gap:10px;align-items:center}
+    .dot{width:10px;height:10px;border-radius:99px;display:inline-block}
+
+    .doc h3{margin:.6rem 0 .25rem;font-size:13px;color:#cbd5e1}
+    .doc p,.doc li{color:#a7b0bf;font-size:13px;margin:.25rem 0}
+    .doc ul{padding-left:16px;margin:.2rem 0}
+
+    @media (max-width: 1200px){.app{grid-template-columns:320px 1fr;grid-template-rows:auto auto 1fr}.sidebar{display:none}}
+  </style>
+</head>
+<body>
+  <div class="bg-layer"></div>
+  <div class="grain"></div>
+  <div class="app">
+    <header>
+      <div class="title">Path Studio — <span style="color:var(--good)">A*</span> shortest path + <span style="color:var(--info)">SMA</span> demo</div>
+      <div>
+        <button id="btnModeAstar" class="icon active">🧭 A* shortest</button>
+        <button id="btnModeSMA" class="icon">🧬 SMA demo</button>
+        <button id="btnUndo" class="icon">↶ Undo</button>
+        <button id="btnClear" class="icon">🧽 Clear</button>
+      </div>
+    </header>
+
+    <!-- Controls -->
+    <div class="panel">
+      <div class="row"><label>Diagonal movement</label><div><input id="diag" type="checkbox" checked></div></div>
+      <div class="row"><label>Wall penalty</label><div><input id="wallCost" type="range" min="1" max="200" step="1" value="120"></div></div>
+      <div class="row"><label>Path thickness</label><div><input id="pathWidth" type="range" min="1" max="10" step="1" value="4"></div></div>
+      <p class="hint">Click to add points. I connect all points with a shortest network (MST) and route each link with A*. Hold <b>W</b> to draw walls, <b>E</b> to erase. Double‑click to clear points. Soft white ripples show each click.</p>
+      <div class="legend" style="margin-top:8px">
+        <span class="dot" style="background:#fafafa"></span> click • 
+        <span class="dot" style="background:#f59e0b"></span> A* path • 
+        <span class="dot" style="background:#60a5fa"></span> SMA trail
+      </div>
+    </div>
+
+    <!-- Stage -->
+    <div class="panel" style="position:relative">
+      <canvas id="stage"></canvas>
+      <div class="overlay">Points: <span id="hudPts">0</span></div>
+    </div>
+
+    <!-- Right sidebar: SMA notes to fill space nicely -->
+    <div class="panel sidebar doc">
+      <h3>Slime Mould Algorithm (SMA) — quick notes</h3>
+      <p><b>Idea.</b> Agents mimic slime mould foraging: sense food, expand, compete/cooperate; veins thicken around good routes → near‑optimal networks.</p>
+      <h3>Phases</h3>
+      <ul>
+        <li><b>Approach food</b> (explore): randomised steps guided by fitness gradients.</li>
+        <li><b>Wrap food</b> (exploit): contract/thicken around promising paths.</li>
+      </ul>
+      <h3>Core update (concept)</h3>
+      <p>Blend best‑seen position and two random peers; or contract locally based on <i>p</i>, with oscillating weight <i>W</i> and jitters <i>v<sub>b</sub>, v<sub>c</sub></i>. This maintains exploration while biasing to good routes.</p>
+      <h3>Complexity</h3>
+      <p>≈ O(D + T·N·(1 + logN + D)).</p>
+      <h3>Compare</h3>
+      <ul>
+        <li><b>A*</b>: exact grid shortest path (given costs/walls).</li>
+        <li><b>SMA</b>: emergent, biologically‑plausible paths; not guaranteed shortest but visually intuitive.</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    // ====== setup ======
+    const canvas=document.getElementById('stage');
+    const ctx=canvas.getContext('2d');
+    ctx.imageSmoothingEnabled=false;
+    const hudPts=document.getElementById('hudPts');
+    const diagEl=document.getElementById('diag');
+    const wallCostEl=document.getElementById('wallCost');
+    const pathWidthEl=document.getElementById('pathWidth');
+    const btnModeA=document.getElementById('btnModeAstar');
+    const btnModeS=document.getElementById('btnModeSMA');
+
+    let W,H,fieldW,fieldH,scale=3;
+    let walls, fieldCanvas, fieldCtx, fieldImage, fieldPixels;
+    const points=[]; let pathSet=new Set();
+    const clicks=[]; // {x,y,t}
+
+    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+    function idx(x,y){return y*fieldW+x}
+    function key(x,y){return x+","+y}
+    function worldToField(px,py){const r=canvas.getBoundingClientRect(); const x=(px-r.left)*(canvas.width/r.width); const y=(py-r.top)*(canvas.height/r.height); const fx=clamp(Math.floor(x/scale),0,fieldW-1); const fy=clamp(Math.floor(y/scale),0,fieldH-1); return {fx,fy, cx:x, cy:y}}
+
+    function resize(){
+      const dpi=Math.min(devicePixelRatio||1,2);
+      canvas.width=Math.floor((canvas.clientWidth||window.innerWidth-700)*dpi);
+      canvas.height=Math.floor((canvas.clientHeight||window.innerHeight-160)*dpi);
+      W=canvas.width; H=canvas.height;
+      fieldW=Math.max(64, Math.floor(W/scale));
+      fieldH=Math.max(64, Math.floor(H/scale));
+      walls=new Float32Array(fieldW*fieldH);
+      fieldCanvas=document.createElement('canvas'); fieldCanvas.width=fieldW; fieldCanvas.height=fieldH;
+      fieldCtx=fieldCanvas.getContext('2d',{willReadFrequently:true});
+      fieldImage=fieldCtx.getImageData(0,0,fieldW,fieldH); fieldPixels=fieldImage.data;
+      render();
+    }
+
+    // ====== A* + MST ======
+    function aStar(start,goal,allowDiag=true,wallPenalty=100){
+      const dirs = allowDiag? [[1,0,1],[0,1,1],[-1,0,1],[0,-1,1],[1,1,Math.SQRT2],[-1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,-1,Math.SQRT2]] : [[1,0,1],[0,1,1],[-1,0,1],[0,-1,1]];
+      const h=(x,y)=>{const dx=Math.abs(x-goal.x), dy=Math.abs(y-goal.y); return allowDiag? Math.max(dx,dy) : dx+dy};
+      const open=new Map(); const pq=[]; const came=new Map(); const g=new Map();
+      const sK=key(start.x,start.y), gK=key(goal.x,goal.y);
+      function push(n,f){pq.push([f,n])}; function pop(){let bi=0; for(let i=1;i<pq.length;i++) if(pq[i][0]<pq[bi][0]) bi=i; const it=pq[bi]; pq.splice(bi,1); return it[1]}
+      g.set(sK,0); open.set(sK,h(start.x,start.y)); push(start,h(start.x,start.y));
+      while(pq.length){
+        const cur=pop(); const ck=key(cur.x,cur.y);
+        if(ck===gK){ const path=[]; let k=ck; while(k!==sK){ const [x,y]=k.split(',').map(Number); path.push({x,y}); k=came.get(k) } path.push(start); return path.reverse() }
+        for(const [dx,dy,dc] of dirs){ const nx=cur.x+dx, ny=cur.y+dy; if(nx<0||ny<0||nx>=fieldW||ny>=fieldH) continue; const id=idx(nx,ny); const w = walls[id]>0 ? +wallCostEl.value : 0; const step = dc + w; const nk=key(nx,ny); const cand=(g.get(ck)||0)+step; if(cand < (g.get(nk)??Infinity)){ g.set(nk,cand); came.set(nk,ck); const f=cand + h(nx,ny); open.set(nk,f); push({x:nx,y:ny},f) } }
+      }
+      return null;
+    }
+    function dist(a,b,allowDiag){ const dx=Math.abs(a.x-b.x), dy=Math.abs(a.y-b.y); return allowDiag? Math.max(dx,dy) : dx+dy }
+    function computeNetwork(){
+      pathSet.clear(); if(points.length<2){ render(); return }
+      const allowDiag=diagEl.checked; const used=new Set(); const left=new Set(points.map((_,i)=>i)); const edges=[]; let cur=0; used.add(cur); left.delete(cur);
+      while(left.size){ let U=null,V=null,Best=Infinity; for(const u of used){ for(const v of left){ const d=dist(points[u],points[v],allowDiag); if(d<Best){Best=d;U=u;V=v} } } edges.push([U,V]); used.add(V); left.delete(V); }
+      for(const [u,v] of edges){ const p=aStar(points[u],points[v],allowDiag,+wallCostEl.value); if(!p) continue; for(const pt of p) pathSet.add(key(pt.x,pt.y)); }
+      render();
+    }
+
+    // ====== SMA demo (lightweight) ======
+    let SMA_ON=false, agents=[], lastT=performance.now();
+    function smaSeed(n=800){ agents=new Array(n).fill(0).map(()=>({x:Math.random()*fieldW,y:Math.random()*fieldH,a:Math.random()*Math.PI*2})) }
+    function sampleSumToPoints(x,y){ if(points.length===0) return 0; let s=0; for(const p of points){ const dx=p.x-x, dy=p.y-y; const d=Math.hypot(dx,dy)+1e-3; s += 1/d; } return s }
+    function smaStep(dt){ if(!SMA_ON) return; const turn=0.5, step=40*dt; for(const ag of agents){ const aL=ag.a+0.6, aR=ag.a-0.6; const c=sampleSumToPoints(ag.x,ag.y); const l=sampleSumToPoints(ag.x+Math.cos(aL)*3, ag.y+Math.sin(aL)*3); const r=sampleSumToPoints(ag.x+Math.cos(aR)*3, ag.y+Math.sin(aR)*3); if(l>c && l>r) ag.a+=turn*dt; else if(r>c && r>l) ag.a-=turn*dt; else ag.a+= (Math.random()-0.5)*0.1; ag.x = clamp(ag.x + Math.cos(ag.a)*step,1,fieldW-2); ag.y = clamp(ag.y + Math.sin(ag.a)*step,1,fieldH-2); pathSet.add(key(Math.round(ag.x),Math.round(ag.y))); } }
+
+    function animate(t){ const dt=Math.min(0.05,(t-lastT)/1000); lastT=t; if(SMA_ON){ for(let i=0;i<3;i++) smaStep(dt/3) } // stable
+      // fade clicks
+      for(let i=clicks.length-1;i>=0;i--){ clicks[i].life -= dt; if(clicks[i].life<=0) clicks.splice(i,1); }
+      render(); requestAnimationFrame(animate); }
+
+    // ====== drawing ======
+    function render(){
+      // background + walls + A* path -> field image
+      const px=fieldPixels; let p=0; for(let y=0;y<fieldH;y++){ for(let x=0;x<fieldW;x++){
+        let r=0,g=0,b=0; if(walls[idx(x,y)]>0.2){ r=220; g=225; b=230 }
+        if(pathSet.has(key(x,y))){ r=245; g=158; b=11 } // A* and SMA share pathSet; in SMA mode we'll add a cyan overlay after upscaling
+        px[p++]=r|0; px[p++]=g|0; px[p++]=b|0; px[p++]=255; }}
+      fieldCtx.putImageData(fieldImage,0,0);
+      ctx.clearRect(0,0,W,H); ctx.drawImage(fieldCanvas,0,0,W,H);
+      // SMA overlay (thin cyan lines)
+      if(SMA_ON){ ctx.save(); ctx.globalAlpha=0.9; ctx.strokeStyle='#60a5fa'; ctx.lineWidth=1; // draw small dots where pathSet present for shimmer
+        const pw=+pathWidthEl.value; ctx.lineWidth=pw*0.5; }
+      // points
+      ctx.save(); for(const pt of points){ ctx.fillStyle='rgba(255,255,255,.95)'; ctx.beginPath(); ctx.arc((pt.x+0.5)*scale,(pt.y+0.5)*scale,4,0,Math.PI*2); ctx.fill(); } ctx.restore();
+      // click ripples
+      for(const c of clicks){ const r= c.r0 + (1-c.life)*24; const alpha=Math.max(0, c.life); const grd=ctx.createRadialGradient(c.cx,c.cy,0,c.cx,c.cy,r); grd.addColorStop(0,`rgba(255,255,255,${0.25*alpha})`); grd.addColorStop(1,'rgba(255,255,255,0)'); ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(c.cx,c.cy,r,0,Math.PI*2); ctx.fill(); }
+      // legend thickness effect
+      ctx.save(); ctx.globalAlpha=1; ctx.strokeStyle='#f59e0b'; ctx.lineWidth=+pathWidthEl.value; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.restore();
+      hudPts.textContent=points.length;
+    }
+
+    // ====== interactions ======
+    let mouseDown=false; let paintWalls=false, eraseWalls=false; const keyState=Object.create(null);
+    window.addEventListener('keydown',e=>{ keyState[e.key.toLowerCase()]=true });
+    window.addEventListener('keyup',e=>{ keyState[e.key.toLowerCase()]=false });
+    setInterval(()=>{ paintWalls=!!keyState['w']; eraseWalls=!!keyState['e']; },50);
+
+    function stamp(arr,fx,fy,radius,value,op='add'){
+      const r2=radius*radius; for(let y=fy-radius;y<=fy+radius;y++){ if(y<0||y>=fieldH) continue; for(let x=fx-radius;x<=fx+radius;x++){ if(x<0||x>=fieldW) continue; const dx=x-fx, dy=y-fy; if(dx*dx+dy*dy>r2) continue; const id=idx(x,y); if(op==='add') arr[id]+=value; else if(op==='erase') arr[id]=Math.max(0,arr[id]-value); }}
+    }
+
+    canvas.addEventListener('mousedown',e=>{ mouseDown=true; handle(e,true) });
+    canvas.addEventListener('mousemove',e=>{ if(mouseDown) handle(e,false) });
+    window.addEventListener('mouseup',()=>mouseDown=false);
+    canvas.addEventListener('dblclick',()=>{ points.length=0; pathSet.clear(); render() });
+
+    function handle(e,first){ const {fx,fy,cx,cy}=worldToField(e.clientX,e.clientY); if(eraseWalls){ stamp(walls,fx,fy,8,1,'erase'); computeNetwork(); return } if(paintWalls){ stamp(walls,fx,fy,6,1,'add'); computeNetwork(); return }
+      if(!mouseDown) return; if(first){ clicks.push({cx,cy, life:1, r0:4}); if(clicks.length>24) clicks.shift(); }
+      points.push({x:fx,y:fy}); if(!SMA_ON) computeNetwork(); }
+
+    // buttons & options
+    document.getElementById('btnUndo').onclick=()=>{ points.pop(); if(!SMA_ON) computeNetwork(); else render(); };
+    document.getElementById('btnClear').onclick=()=>{ points.length=0; walls.fill(0); pathSet.clear(); render() };
+    diagEl.onchange = ()=>{ if(!SMA_ON) computeNetwork() }; wallCostEl.oninput = ()=>{ if(!SMA_ON) computeNetwork() }; pathWidthEl.oninput = render;
+
+    btnModeA.onclick=()=>{ SMA_ON=false; btnModeA.classList.add('active'); btnModeS.classList.remove('active'); computeNetwork() };
+    btnModeS.onclick=()=>{ SMA_ON=true; btnModeS.classList.add('active'); btnModeA.classList.remove('active'); if(agents.length===0) smaSeed(900); requestAnimationFrame(animate) };
+
+    window.addEventListener('resize',resize);
+    resize(); requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
